@@ -1,0 +1,206 @@
+La prima idea è quella di usare delle macchine virtuali, perciò andiamo sul sito di VirtualBox, lo scarichiamo e lo installiamo.
+A creare la macchina virtuale si fa presto, poi però bisogna installare il S.O., la JVM, tomcat ... tutto lavoro manuale.
+Se voglio creare un nuovo ambiente ho due opzioni:
+- ripartire da zero :(
+- clonare la macchina virtuale
+La seconda opzione sembra attraente ma se voglio una configurazione non proprio identica c'è ancora bisogno di diverso lavoro manuale. Inoltre l'immagine di una macchina virtuale è estremamente voluminosa e portarla da un PC ad un altro potrebbe non essere proprio agevole.
+
+Un primo miglioramento lo abbiamo introducendo Vagrant (https://www.vagrantup.com/).
+Vagrant permette di gestire in maniera estremamente light e, soprattutto, automatizzabile delle macchine virtuali complete di sistema operativo.
+Vagrant non è un motore di virtualizzazione ma utilizza quello che già abbiamo sulla nostra macchina. Nel nostro caso avevamo già installato VirtualBox e Vagrant utilizzerà quello.
+Scarichiamo ed installiamo Vagrant. Io ho scelto la 1.7.1 perchè, dopo qualche prova, ho scoperto che l'ultima disponibile (1.7.2) ha un bug un po' fastidioso anche se aggirabile.
+Poi creiamo nella nostra home una directory in cui andremo a configurare le nostre macchine virtuali.
+
+mkdir vagrant
+cd vagrant
+
+Poi, all'interno di questa, una directory per il nostro server tomcat.
+
+mkdir tomcatserver
+cd tomcatserver
+
+Qui creiamo un file chiamato "Vagrantfile" in cui andremo a copiare il seguente testo:
+
+Vagrant.configure(2) do |config|
+  config.vm.box = "hashicorp/precise32"
+  config.vm.network "public_network", ip: "192.168.0.52"
+end
+
+Chi conosce Ruby non avrà difficoltà a riconoscere che questo non è altro uno script Ruby.
+
+Nella prima riga
+  config.vm.box = "hashicorp/precise32"
+andiamo a specificare il template di macchina virtuale (detto "box") che vogliamo usare, nel nostro caso una Ubuntu 12.04 (Precise Pangolin) a 32 bit. Vagrant ci mette a disposizione moltissimi template. Date un'occhiata al sito https://atlas.hashicorp.com/boxes/search per avere un idea.
+
+Nella seconda riga
+  config.vm.network "public_network", ip: "192.168.0.52"
+indichiamo che la macchina virtuale sarà visibile anche all'esterno della nostra macchina fisica con indirizzo ip "192.168.0.52". 
+Come potrete immaginare le opzioni di configurazione sono molte più di queste. Se volete avere un'idea consultate il sito di Vagrant.
+
+Fatto ciò digitate:
+
+vagrant up
+
+e Vagrant avvierà la vostra macchina virtuale. La prima volta ci metterà un po' (per me 10 minuti) perchè dovrà scaricare il template dal sito. Una volta che il template è scaricato sarà disponibile ogni volta che avvieremo una macchina virtuale che lo utilizza.
+
+A questo punto la nostra macchina virtuale sta girando. Possiamo aprire una shell con
+
+vagrant ssh
+
+e giocarci un po'. Una volta finito con
+
+vagrant halt
+
+fermiamo la nostra macchina virtuale. Per farla ripartire basta un vagrant up (che stavolta sarà molto più veloce) mentre se non ci piace più possiamo distruggerla con
+
+vagrant destroy
+
+La configurazione è tutta nel nostro Vagrantfile. Per spostarla su un altro PC su cui è installato Vagrant basta portare questo file di pochi byte e in pochi minuti è tutto up & running senza alcun intervento manuale.
+
+Questo ci risolve il problema del sistema operativo ma non quello dell'installazione del software, perciò dobbiamo fare un
+passo ulteriore: introduciamo "Chef".
+
+Chef permette di effettuare la configurazione di una macchina (fisica o virtuale) in maniera automatizzata tramite uno script.
+
+Andiamo sul sito di Chef https://www.chef.io dove scaricheremo e installeremo lo Chef Developer Kit (Chef DK).
+
+Gli script di configurazione di Chef (sempre Ruby!) sono organizzati in package detti "cookbooks" (libri di ricette) al 
+cui interno ci saranno una o più recipes (ricette).
+
+Perciò come prima cosa andiamo a creare il nostro cookbook. Dalla stessa directory che contiene il Vagrantfile lanciamo
+il comando:
+
+chef generate cookbook cookbooks/my_tomcat_server
+
+Otterremo un alberatura come questa:
+
+├── cookbooks
+│   └── my_tomcat_server
+│       ├── Berksfile
+│       ├── chefignore
+│       ├── metadata.rb
+│       ├── README.md
+│       ├── recipes
+│       │   ├── default.rb
+│       ├── spec
+│       │   ├── spec_helper.rb
+│       │   └── unit
+│       │       └── recipes
+│       │           └── default_spec.rb
+│       └── test
+│           └── integration
+│               └── default
+│                   └── serverspec
+│                       ├── default_spec.rb
+│                       └── spec_helper.rb
+
+Per il momento ignoreremo tutti i file tranne metdata.rb e recipes/default.rb
+
+Dobbiamo eseguire tre passi di configurazione sulla nostra macchina virtuale:
+
+- aggiornare la lista dei pacchetti apt
+
+- installare la JVM
+
+- installare tomcat
+
+Per ognuno di questi passi possiamo sfruttare un cookbook di chef già esistente. Potete consultare la lista dei cookbook sul sito https://supermarket.chef.io
+
+Invece di scaricare ogni cookbook che ci serve dal supermarket a mano (stiamo cercando di evitare il più possibile le operazioni manuali) utilizziamo un tool che ci mette a disposizione lo Chef DK chiamato Berkshelf.
+
+Apriamo il file metadata.rb generato dal comando precedente e, in fondo, inseriamo le righe:
+
+depends 'apt', '~> 2.6.1'
+depends 'java', '~> 1.31.0'
+depends 'tomcat', '~> 0.17.3'
+
+per indicare a Berkshelf che avremo bisogno di quei cookbook.
+
+Invece nel file recipes/default.rb inseriamo le righe:
+
+include_recipe 'apt::default'
+include_recipe 'java::default'
+include_recipe 'tomcat::default'
+
+Questo ci dice che quando Chef andrà ad eseguire la nostra ricetta (recipe), il cui nome sarà "my_tomcat_server::default" verranno eseguite in serie le recipes:
+
+apt::default    che aggiorna l'elenco dei package apt
+java::default   che installa la JVM
+tomcat::default che installa tomcat
+
+Ognuna di queste tre recipe ammette dei parametri di configurazione ma per il momento ci accontenteremo dei default.
+
+Infine modifichiamo il Vagrantfile in modo che sia come questo:
+
+Vagrant.configure(2) do |config|
+  config.vm.box = "hashicorp/precise32"
+  config.vm.network "public_network", ip: "192.168.0.52"
+  
+  config.berkshelf.enabled = true
+  config.berkshelf.berksfile_path = "cookbooks/my_tomcat_server/Berksfile"
+  
+  config.vm.provision "chef_solo" do |chef|
+    chef.add_recipe "my_tomcat_server"
+  end
+end
+
+In questo modo quando lanceremo la nostra macchina virtuale con vagrant up per la prima volta (o dopo aver eseguito vagrant destroy) Chef lancerà la default recipe del cookbook my_tomcat_server.
+
+Prima di farlo però, dobbiamo assicurarci che Berkshelf sia in grado di trovare le nostre dipendenze, perciò:
+
+- installiamo il plugin berkshelf-vagrant con
+
+vagrant plugin install vagrant-berkshelf
+
+Questo andrà fatto solamente una volta.
+
+- facciamo sì che Berkshelf scarichi in locale i cookbook che ci servono:
+
+cd cookbooks/my_tomcat_server
+berks install
+
+Questa seconda operazione andrà fatta ogni volta che si modificano le dipendenze del nostro cookbook.
+
+Fatto ciò possiamo procedere in due modi:
+
+vagrant destroy
+vagrant up
+
+Questo distrugge la macchina virtuale, la ricrea da zero e lancia Chef per installare la JVM e Tomcat.
+
+Oppure, con la macchina virtuale già up & running:
+
+vagrant reload --provision
+
+Questo effettua un reboot della macchina virtuale e successivamente lancia Chef per installare la JVM e Tomcat.
+
+Per controllare che Tomcat sta funzionando possiamo aprire un browser e puntarlo all'URL
+
+http://192.168.0.52:8080
+
+e controllare che si ottiene la pagina di default di Tomcat.
+
+Ora che abbiamo una macchina virtuale con Tomcat funzionante procediamo al deploy della nostra webapp. Supponiamo di aver già prodotto mywebapp.jar e copiamolo nella stessa directory in cui abbiamo posizionato il Vagrantfile.
+
+Successivamente apriamo la nostra recipe recipes/default.rb e aggiungiamo in fondo le seguenti righe:
+
+service 'tomcat6' do
+  action :stop
+end
+
+bash 'deploy_webapp' do
+  code <<-EOH
+    cd /var/lib/tomcat6/webapps
+    cp /vagrant/mywebapp.war .
+    EOH
+end
+
+service 'tomcat6' do
+  action :start
+end
+
+La prima cosa che viene fatto e stoppare il servizio di tomcat6 che viene avviato dalla recipe tomcat::default.
+
+Poi si procede a copiare il file mywebapp.war nella directory webapps dell'installazione di Tomcat. Si noti che i file presenti sulla macchina fisica nella directory contenente il Vagrantfile sono accessibili dalla macchina virtuale nella directory /vagrant
+
+Infine si riavvia il servizio di tomcat.  
